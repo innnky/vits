@@ -14,6 +14,7 @@ def text_to_sequence(text):
             print("skip:", symbol)
             continue
         clean_text+=symbol
+    print(clean_text)
     return cleaned_text_to_sequence(clean_text)
 
 
@@ -133,3 +134,5 @@ def chinese_dialect_cleaners(text):
     text = re.sub(r'\s+$', '', text)
     text = re.sub(r'([^\.,!\?\-…~])$', r'\1.', text)
     return text
+if __name__ == '__main__':
+    print(text_to_sequence("[ZH]据^上海  证券  报  报道[ZH]"))

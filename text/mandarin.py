@@ -285,10 +285,8 @@ def bopomofo_to_ipa2(text):
 
 def chinese_to_romaji(text):
     text = number_to_chinese(text)
-    t1 = zh_to_bopomofo(text)
-    print(t1)
-    text = chinese_to_bopomofo(text)
-    print(text)
+    text = zh_to_bopomofo(text)
+    # text = chinese_to_bopomofo(text)
     text = latin_to_bopomofo(text)
     text = bopomofo_to_romaji(text)
     text = re.sub('i([aoe])', r'y\1', text)
