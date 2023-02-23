@@ -8,6 +8,8 @@ import logging
 
 
 # List of (Latin alphabet, bopomofo) pairs:
+from text.paddle_zh_frontend import zh_to_bopomofo
+
 _latin_to_bopomofo = [(re.compile('%s' % x[0], re.IGNORECASE), x[1]) for x in [
     ('a', 'ㄟˉ'),
     ('b', 'ㄅㄧˋ'),
@@ -283,7 +285,10 @@ def bopomofo_to_ipa2(text):
 
 def chinese_to_romaji(text):
     text = number_to_chinese(text)
+    t1 = zh_to_bopomofo(text)
+    print(t1)
     text = chinese_to_bopomofo(text)
+    print(text)
     text = latin_to_bopomofo(text)
     text = bopomofo_to_romaji(text)
     text = re.sub('i([aoe])', r'y\1', text)
@@ -324,3 +329,23 @@ def chinese_to_ipa2(text):
     text = re.sub(r'([ʂɹ]ʰ?)([˩˨˧˦˥ ]+|$)', r'\1ʅ\2', text)
     text = re.sub(r'(sʰ?)([˩˨˧˦˥ ]+|$)', r'\1ɿ\2', text)
     return text
+
+
+if __name__ == '__main__':
+    # test_text = "[JA]こんにちは。こんにちは\}{ll[JA]abc你好[ZH]你好[ZH][EN]Hello你好.vits![EN][JA]こんにちは。[JA]"
+    # text = "借还款,他只是一个纸老虎，开户行，奥大家好33啊我是Ab3s,?萨达撒abst 123、~~、、 但是、、、A B C D!"
+    text = "奥大家,好33啊,こんにちは我是Ab3s,?萨达撒abst 123、~~、、 但*是、、、A B C D!"
+    text = "奥大家,好33啊"
+    text = "他只是一个纸老虎。"
+    # text = '[JA]シシ…すご,,いじゃんシシラシャミョンありがとうえーっとシンモーレシンモーレじゃんシシラシャミョン[JA]'
+    # text="大家好#要筛#，你好#也#要筛#。"
+    # text = "嗯？什么东西…沉甸甸的…下午1:00，今天是2022/5/10"
+    # text = "A I人工智能"
+    # text = '[P]pin1 yin1 zhen1 hao3 wan2[P]扎堆儿-#'
+    # text = "[JA]それより仮屋さん,例の件ですが――[JA]"
+    # text = "早上好，今天是2020/10/29，最低温度是-3°C。"
+    # # text = "…………"
+    # print(text_to_sequence(text))
+    #
+    # print(time.time()-t)
+    print(chinese_to_lazy_ipa(text))

@@ -15,32 +15,38 @@ logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging
 
 
-def load_checkpoint(checkpoint_path, model, optimizer=None):
-  assert os.path.isfile(checkpoint_path)
-  checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
-  iteration = checkpoint_dict['iteration']
-  learning_rate = checkpoint_dict['learning_rate']
-  if optimizer is not None:
-    optimizer.load_state_dict(checkpoint_dict['optimizer'])
-  saved_state_dict = checkpoint_dict['model']
-  if hasattr(model, 'module'):
-    state_dict = model.module.state_dict()
-  else:
-    state_dict = model.state_dict()
-  new_state_dict= {}
-  for k, v in state_dict.items():
-    try:
-      new_state_dict[k] = saved_state_dict[k]
-    except:
-      logger.info("%s is not in the checkpoint" % k)
-      new_state_dict[k] = v
-  if hasattr(model, 'module'):
-    model.module.load_state_dict(new_state_dict)
-  else:
-    model.load_state_dict(new_state_dict)
-  logger.info("Loaded checkpoint '{}' (iteration {})" .format(
-    checkpoint_path, iteration))
-  return model, optimizer, learning_rate, iteration
+
+def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False):
+    assert os.path.isfile(checkpoint_path)
+    checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
+    iteration = checkpoint_dict['iteration']
+    learning_rate = checkpoint_dict['learning_rate']
+    if optimizer is not None and not skip_optimizer and checkpoint_dict['optimizer'] is not None:
+        optimizer.load_state_dict(checkpoint_dict['optimizer'])
+    saved_state_dict = checkpoint_dict['model']
+    if hasattr(model, 'module'):
+        state_dict = model.module.state_dict()
+    else:
+        state_dict = model.state_dict()
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        try:
+            # assert "dec" in k or "disc" in k
+            # print("load", k)
+            new_state_dict[k] = saved_state_dict[k]
+            assert saved_state_dict[k].shape == v.shape, (saved_state_dict[k].shape, v.shape)
+        except:
+            print("error, %s is not in the checkpoint" % k)
+            logger.info("%s is not in the checkpoint" % k)
+            new_state_dict[k] = v
+    if hasattr(model, 'module'):
+        model.module.load_state_dict(new_state_dict)
+    else:
+        model.load_state_dict(new_state_dict)
+    print("load ")
+    logger.info("Loaded checkpoint '{}' (iteration {})".format(
+        checkpoint_path, iteration))
+    return model, optimizer, learning_rate, iteration
 
 
 def save_checkpoint(model, optimizer, learning_rate, iteration, checkpoint_path):
@@ -54,6 +60,26 @@ def save_checkpoint(model, optimizer, learning_rate, iteration, checkpoint_path)
               'iteration': iteration,
               'optimizer': optimizer.state_dict(),
               'learning_rate': learning_rate}, checkpoint_path)
+
+def clean_checkpoints(path_to_models='logs/44k/', n_ckpts_to_keep=2, sort_by_time=True):
+  """Freeing up space by deleting saved ckpts
+
+  Arguments:
+  path_to_models    --  Path to the model directory
+  n_ckpts_to_keep   --  Number of ckpts to keep, excluding G_0.pth and D_0.pth
+  sort_by_time      --  True -> chronologically delete ckpts
+                        False -> lexicographically delete ckpts
+  """
+  ckpts_files = [f for f in os.listdir(path_to_models) if os.path.isfile(os.path.join(path_to_models, f))]
+  name_key = (lambda _f: int(re.compile('._(\d+)\.pth').match(_f).group(1)))
+  time_key = (lambda _f: os.path.getmtime(os.path.join(path_to_models, _f)))
+  sort_key = time_key if sort_by_time else name_key
+  x_sorted = lambda _x: sorted([f for f in ckpts_files if f.startswith(_x) and not f.endswith('_0.pth')], key=sort_key)
+  to_del = [os.path.join(path_to_models, fn) for fn in
+            (x_sorted('G')[:-n_ckpts_to_keep] + x_sorted('D')[:-n_ckpts_to_keep])]
+  del_info = lambda fn: logger.info(f".. Free up space by deleting ckpt {fn}")
+  del_routine = lambda x: [os.remove(x), del_info(x)]
+  rs = [del_routine(fn) for fn in to_del]
 
 
 def summarize(writer, global_step, scalars={}, histograms={}, images={}, audios={}, audio_sampling_rate=22050):
@@ -142,33 +168,30 @@ def load_filepaths_and_text(filename, split="|"):
 
 
 def get_hparams(init=True):
-  parser = argparse.ArgumentParser()
-  parser.add_argument('-c', '--config', type=str, default="./configs/base.json",
-                      help='JSON file for configuration')
-  parser.add_argument('-m', '--model', type=str, required=True,
-                      help='Model name')
-  
-  args = parser.parse_args()
-  model_dir = os.path.join("../drive/MyDrive", args.model)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--config', type=str, default="./configs/config.json",
+                        help='JSON file for configuration')
+    # parser.add_argument('-m', '--model', type=str, required=True,
+    #                    help='Model name')
 
-  if not os.path.exists(model_dir):
-    os.makedirs(model_dir)
+    args = parser.parse_args()
 
-  config_path = args.config
-  config_save_path = os.path.join(model_dir, "config.json")
-  if init:
+    config_path = args.config
     with open(config_path, "r") as f:
-      data = f.read()
+        data = f.read()
+    config = json.loads(data)
+
+    hparams = HParams(**config)
+    # hparams.model_dir = model_dir
+    model_dir = hparams.model_dir
+    config_save_path = os.path.join(model_dir, "config.json")
+
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
     with open(config_save_path, "w") as f:
-      f.write(data)
-  else:
-    with open(config_save_path, "r") as f:
-      data = f.read()
-  config = json.loads(data)
-  
-  hparams = HParams(**config)
-  hparams.model_dir = model_dir
-  return hparams
+        f.write(data)
+    return hparams
 
 
 def get_hparams_from_dir(model_dir):
