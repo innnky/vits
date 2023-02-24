@@ -97,6 +97,10 @@ def zh_to_bopomofo(text):
     bopomofos = bopomofo(pinyins)
     return bopomofos.replace(" ", "").replace("#", " ")
 
+def pinyin_to_bopomofo(pinyin):
+    bopomofos = bopomofo(pinyin)
+    return bopomofos.replace(" ", "").replace("#", " ")
+
 def zh_to_phonemes(text):
     # 替换标点为英文标点
     text = pu_symbol_replace(text)

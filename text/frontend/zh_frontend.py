@@ -36,7 +36,7 @@ class Frontend():
         self.tone_modifier = ToneSandhi()
         self.text_normalizer = TextNormalizer()
 
-        self.punc = ['!', '?', '…', ",", ".", "#", '-']
+        self.punc = ['!', '?', '…', ",", ".", "#", '-', "%", "$"]
         # g2p_model can be pypinyin and g2pM
         self.g2p_model = g2p_model
         self.add_word_sep = True

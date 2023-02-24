@@ -8,7 +8,7 @@ import logging
 
 
 # List of (Latin alphabet, bopomofo) pairs:
-from text.paddle_zh_frontend import zh_to_bopomofo
+from text.paddle_zh_frontend import zh_to_bopomofo, pinyin_to_bopomofo
 
 _latin_to_bopomofo = [(re.compile('%s' % x[0], re.IGNORECASE), x[1]) for x in [
     ('a', 'ㄟˉ'),
@@ -242,22 +242,6 @@ def number_to_chinese(text):
     return text
 
 
-def chinese_to_bopomofo(text):
-    text = text.replace('、', '，').replace('；', '，').replace('：', '，')
-    words = jieba.lcut(text, cut_all=False)
-    text = ''
-    for word in words:
-        bopomofos = lazy_pinyin(word, BOPOMOFO)
-        if not re.search('[\u4e00-\u9fff]', word):
-            text += word
-            continue
-        for i in range(len(bopomofos)):
-            bopomofos[i] = re.sub(r'([\u3105-\u3129])$', r'\1ˉ', bopomofos[i])
-        if text != '':
-            text += ' '
-        text += ''.join(bopomofos)
-    return text
-
 
 def latin_to_bopomofo(text):
     for regex, replacement in _latin_to_bopomofo:
@@ -306,7 +290,7 @@ def chinese_to_lazy_ipa(text):
 
 def chinese_to_ipa(text):
     text = number_to_chinese(text)
-    text = chinese_to_bopomofo(text)
+    text = zh_to_bopomofo(text)
     text = latin_to_bopomofo(text)
     text = bopomofo_to_ipa(text)
     text = re.sub('i([aoe])', r'j\1', text)
@@ -316,10 +300,21 @@ def chinese_to_ipa(text):
     text = re.sub('([s][⁼ʰ]?)([→↓↑ ]+|$)', r'\1ɹ\2', text)
     return text
 
+def pinyin_to_ipa(text):
+    text = pinyin_to_bopomofo(text)
+    text = latin_to_bopomofo(text)
+    text = bopomofo_to_ipa(text)
+    text = re.sub('i([aoe])', r'j\1', text)
+    text = re.sub('u([aoəe])', r'w\1', text)
+    text = re.sub('([sɹ]`[⁼ʰ]?)([→↓↑ ]+|$)',
+                  r'\1ɹ`\2', text).replace('ɻ', 'ɹ`')
+    text = re.sub('([s][⁼ʰ]?)([→↓↑ ]+|$)', r'\1ɹ\2', text)
+    text = text.replace("%", " %").replace( "$", " $")
+    return text
 
 def chinese_to_ipa2(text):
     text = number_to_chinese(text)
-    text = chinese_to_bopomofo(text)
+    text = zh_to_bopomofo(text)
     text = latin_to_bopomofo(text)
     text = bopomofo_to_ipa2(text)
     text = re.sub(r'i([aoe])', r'j\1', text)

@@ -1,20 +1,37 @@
 import re
 from text.japanese import japanese_to_romaji_with_accent, japanese_to_ipa, japanese_to_ipa2, japanese_to_ipa3
 from text.korean import latin_to_hangul, number_to_hangul, divide_hangul, korean_to_lazy_ipa, korean_to_ipa
-from text.mandarin import number_to_chinese, chinese_to_bopomofo, latin_to_bopomofo, chinese_to_romaji, chinese_to_lazy_ipa, chinese_to_ipa, chinese_to_ipa2
+from text.mandarin import number_to_chinese, latin_to_bopomofo, chinese_to_romaji, \
+    chinese_to_lazy_ipa, chinese_to_ipa, chinese_to_ipa2, pinyin_to_ipa
 from text.english import english_to_lazy_ipa, english_to_ipa2, english_to_lazy_ipa2
 from text.symbols import symbols
 from text import cleaned_text_to_sequence
 
-def text_to_sequence(text):
+
+def str_replace( data):
+    chinaTab = [";", ":", "\"", "'"]
+    englishTab = [".", ",", ' ', " "]
+    for index in range(len(chinaTab)):
+        if chinaTab[index] in data:
+            data = data.replace(chinaTab[index], englishTab[index])
+    return data
+
+
+def _clean_text(text):
     clean_text = ''
-    _clean_text = cjks_cleaners(text)
+    _clean_text = cjke_cleaners2(text)
+    _clean_text = str_replace(_clean_text)
+
     for symbol in _clean_text:
         if symbol not in symbols:
+            print(text, _clean_text)
             print("skip:", symbol)
             continue
         clean_text+=symbol
-    print(clean_text)
+    return clean_text
+
+def text_to_sequence(text):
+    clean_text = _clean_text(text)
     return cleaned_text_to_sequence(clean_text)
 
 
@@ -101,38 +118,15 @@ def cjke_cleaners2(text):
                   lambda x: korean_to_ipa(x.group(1))+' ', text)
     text = re.sub(r'\[EN\](.*?)\[EN\]',
                   lambda x: english_to_ipa2(x.group(1))+' ', text)
+    text = re.sub(r'\[P\](.*?)\[P\]',
+                  lambda x: pinyin_to_ipa(x.group(1))+' ', text)
     text = re.sub(r'\s+$', '', text)
     text = re.sub(r'([^\.,!\?\-…~])$', r'\1.', text)
     return text
 
 
-def thai_cleaners(text):
-    text = num_to_thai(text)
-    text = latin_to_thai(text)
-    return text
 
-
-def shanghainese_cleaners(text):
-    text = shanghainese_to_ipa(text)
-    text = re.sub(r'([^\.,!\?\-…~])$', r'\1.', text)
-    return text
-
-
-def chinese_dialect_cleaners(text):
-    text = re.sub(r'\[ZH\](.*?)\[ZH\]',
-                  lambda x: chinese_to_ipa2(x.group(1))+' ', text)
-    text = re.sub(r'\[JA\](.*?)\[JA\]',
-                  lambda x: japanese_to_ipa3(x.group(1)).replace('Q', 'ʔ')+' ', text)
-    text = re.sub(r'\[SH\](.*?)\[SH\]', lambda x: shanghainese_to_ipa(x.group(1)).replace('1', '˥˧').replace('5',
-                  '˧˧˦').replace('6', '˩˩˧').replace('7', '˥').replace('8', '˩˨').replace('ᴀ', 'ɐ').replace('ᴇ', 'e')+' ', text)
-    text = re.sub(r'\[GD\](.*?)\[GD\]',
-                  lambda x: cantonese_to_ipa(x.group(1))+' ', text)
-    text = re.sub(r'\[EN\](.*?)\[EN\]',
-                  lambda x: english_to_lazy_ipa2(x.group(1))+' ', text)
-    text = re.sub(r'\[([A-Z]{2})\](.*?)\[\1\]', lambda x: ngu_dialect_to_ipa(x.group(2), x.group(
-        1)).replace('ʣ', 'dz').replace('ʥ', 'dʑ').replace('ʦ', 'ts').replace('ʨ', 'tɕ')+' ', text)
-    text = re.sub(r'\s+$', '', text)
-    text = re.sub(r'([^\.,!\?\-…~])$', r'\1.', text)
-    return text
 if __name__ == '__main__':
-    print(text_to_sequence("[ZH]据^上海  证券  报  报道[ZH]"))
+    print(_clean_text("%[EN]Miss Radcliffe's letter had told him [EN]"))
+    # print(_clean_text("[P]ke3 % xian4 zai4 % jia4 ge2 % zhi2 jiang4 dao4 % yi2 wan4 duo1 $[P]"))
+    # print(_clean_text("[ZH]可现在价格是降到一万多[ZH]"))

@@ -1,4 +1,7 @@
 """ from https://github.com/keithito/tacotron """
+from g2p_en import G2p
+
+from text.arpa2ipa import arpa_to_ipa
 
 '''
 Cleaners are transformations that run over the input text at both training and eval time.
@@ -14,7 +17,7 @@ hyperparameter. Some cleaners are English-specific. You'll typically want to use
 
 
 # Regular expression matching whitespace:
-
+g2p = G2p()
 
 import re
 import inflect
@@ -158,10 +161,12 @@ def mark_dark_l(text):
 
 
 def english_to_ipa(text):
+    text = text.replace("-", " ")
     text = unidecode(text).lower()
     text = expand_abbreviations(text)
     text = normalize_numbers(text)
     phonemes = ipa.convert(text)
+    phonemes = unrecognized_words_to_ipa(phonemes)
     phonemes = collapse_whitespace(phonemes)
     return phonemes
 
@@ -180,6 +185,34 @@ def english_to_ipa2(text):
         text = re.sub(regex, replacement, text)
     return text.replace('...', '…')
 
+
+def convert_to_ipa(phones):
+    ipa = ""
+    symbols = {"a": "ə", "ey": "eɪ", "aa": "ɑ", "ae": "æ", "ah": "ə", "ao": "ɔ",
+               "aw": "aʊ", "ay": "aɪ", "ch": "ʧ", "dh": "ð", "eh": "ɛ", "er": "ər",
+               "hh": "h", "ih": "ɪ", "jh": "ʤ", "ng": "ŋ", "ow": "oʊ", "oy": "ɔɪ",
+               "sh": "ʃ", "th": "θ", "uh": "ʊ", "uw": "u", "zh": "ʒ", "iy": "i", "y": "j"}
+    for ph in phones:
+        ph = ph.lower()
+        try:
+            if ph[-1] in "01234":
+                ipa+=symbols[ph[:-1]]
+            else:
+                ipa += symbols[ph]
+        except:
+            ipa += ph
+    return ipa
+
+def unrecognized_words_to_ipa(text):
+    matches = re.findall(r'\s([\w|\']+\*)', text)
+    for word in matches:
+        ipa = convert_to_ipa(g2p(word))
+        text = text.replace(word, ipa)
+    matches = re.findall(r'^([\w|\']+\*)', text)
+    for word in matches:
+        ipa = convert_to_ipa(g2p(word))
+        text = text.replace(word, ipa)
+    return text
 
 def english_to_lazy_ipa2(text):
     text = english_to_ipa(text)
