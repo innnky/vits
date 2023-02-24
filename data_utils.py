@@ -83,7 +83,7 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         return spec, audio_norm
 
     def get_text(self, text):
-        text_norm = cleaned_text_to_sequence(text.split(" "))
+        text_norm = cleaned_text_to_sequence(text)
         if self.add_blank:
             text_norm = commons.intersperse(text_norm, 0)
         text_norm = torch.LongTensor(text_norm)
