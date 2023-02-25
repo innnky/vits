@@ -1,7 +1,6 @@
 """ from https://github.com/keithito/tacotron """
 from g2p_en import G2p
 
-from text.arpa2ipa import arpa_to_ipa
 
 '''
 Cleaners are transformations that run over the input text at both training and eval time.

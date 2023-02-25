@@ -19,8 +19,9 @@ if __name__ == '__main__':
     filepaths_and_text = load_filepaths_and_text(filelist)
     for i in tqdm.tqdm(range(len(filepaths_and_text))):
       original_text = filepaths_and_text[i][args.text_index]
-      cleaned_text = text.cleaners._clean_text(original_text)
+      cleaned_text, lang_seq = text.cleaners._clean_text(original_text)
       filepaths_and_text[i][args.text_index] = cleaned_text
+      filepaths_and_text[i].append(" ".join([str(lang) for lang in lang_seq]))
 
     new_filelist = filelist + "." + args.out_extension
     with open(new_filelist, "w", encoding="utf-8") as f:

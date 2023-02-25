@@ -18,21 +18,15 @@ def str_replace( data):
 
 
 def _clean_text(text):
-    clean_text = ''
-    _clean_text = cjke_cleaners2(text)
-    _clean_text = str_replace(_clean_text)
+    cleaned_text, lang_seq = cjke_cleaners3(text)
+    cleaned_text = str_replace(cleaned_text)
+    cleaned_text, lang_seq = remove_invalid_text(cleaned_text, lang_seq)
 
-    for symbol in _clean_text:
-        if symbol not in symbols:
-            print(text, _clean_text)
-            print("skip:", symbol)
-            continue
-        clean_text+=symbol
-    return clean_text
+    return cleaned_text, lang_seq
 
 def text_to_sequence(text):
-    clean_text = _clean_text(text)
-    return cleaned_text_to_sequence(clean_text)
+    cleaned_text, lang_seq = _clean_text(text)
+    return cleaned_text_to_sequence(cleaned_text), lang_seq
 
 
 def japanese_cleaners(text):
@@ -124,9 +118,82 @@ def cjke_cleaners2(text):
     text = re.sub(r'([^\.,!\?\-…~])$', r'\1.', text)
     return text
 
+lang_map = {
+    "ZH": 0,
+    "JA": 1,
+    "KO": 2,
+    "EN": 3,
+    "P": 0,
+    "other":5
+}
 
+
+def cjke_cleaners3(text: str):
+    text = str_replace(text).replace("\"", '')
+    # find all text blocks enclosed in [JA], [ZH], [EN], [P]
+    original_text = text
+    blocks = re.finditer(r'\[(JA|ZH|EN|P|KO)\](.*?)\[\1\]', text)
+    cleaned_text = ""
+    lang_seq = []
+    last_end = 0
+    for block in blocks:
+        start, end = block.span()
+        # insert text not enclosed in any blocks
+        remaining_text = original_text[last_end:start]
+        ipa = others_to_ipa(remaining_text)
+        lang_seq += [lang_map["other"] for i in ipa]
+        cleaned_text += ipa
+        last_end = end
+        language = block.group(1)
+        text = block.group(2)
+        if language == 'P':
+            ipa = pinyin_to_ipa(text)
+            lang_seq += [lang_map[language] for i in ipa]
+            cleaned_text += ipa
+        if language == 'JA':
+            ipa = japanese_to_ipa2(text)
+            lang_seq += [lang_map[language] for i in ipa]
+            cleaned_text += ipa
+        elif language == 'ZH':
+            ipa = chinese_to_ipa(text)
+            lang_seq += [lang_map[language] for i in ipa]
+            cleaned_text += ipa
+        elif language == 'EN':
+            ipa = english_to_ipa2(text)
+            lang_seq += [lang_map[language] for i in ipa]
+            cleaned_text += ipa
+        elif language == 'KO':
+            ipa = korean_to_ipa(text)
+            lang_seq += [lang_map[language] for i in ipa]
+            cleaned_text += ipa
+    remaining_text = original_text[last_end:]
+
+    ipa = others_to_ipa(remaining_text)
+    lang_seq += [lang_map["other"] for i in ipa]
+    cleaned_text += ipa
+    assert len(cleaned_text) == len(lang_seq)
+    return cleaned_text, lang_seq
+
+def others_to_ipa(text):
+    return text
+
+def remove_invalid_text(cleaned_text, lang_seq):
+    new_cleaned_text = ''
+    new_lang_seq = []
+    for symbol, la in zip(cleaned_text, lang_seq):
+        if symbol not in symbols:
+            print(cleaned_text)
+            print("skip:", symbol)
+            continue
+        if la == lang_map["other"]:
+            print("skip:", symbol)
+            continue
+        new_cleaned_text += symbol
+        new_lang_seq.append(la)
+    return new_cleaned_text, new_lang_seq
 
 if __name__ == '__main__':
-    print(_clean_text("%[EN]Miss Radcliffe's letter had told him [EN]"))
+    # print(_clean_text("%[EN]Miss Radcliffe's letter had told him [EN]"))
+    print(cjke_cleaners3("[EN]Miss Radcliffe's letter had told him [EN]你好 hello[ZH]你好啊[ZH]"))
     # print(_clean_text("[P]ke3 % xian4 zai4 % jia4 ge2 % zhi2 jiang4 dao4 % yi2 wan4 duo1 $[P]"))
     # print(_clean_text("[ZH]可现在价格是降到一万多[ZH]"))
