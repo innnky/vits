@@ -131,6 +131,45 @@ class DurationPredictor(nn.Module):
     x = self.proj(x * x_mask)
     return x * x_mask
 
+class PitchPredictor(nn.Module):
+  def __init__(self,
+      out_channels,
+      hidden_channels,
+      filter_channels,
+      n_heads,
+      n_layers,
+      kernel_size,
+      p_dropout):
+    super().__init__()
+    self.out_channels = out_channels
+    self.hidden_channels = hidden_channels
+    self.filter_channels = filter_channels
+    self.n_heads = n_heads
+    self.n_layers = n_layers
+    self.kernel_size = kernel_size
+    self.p_dropout = p_dropout
+    self.pitch_prenet = nn.Conv1d(1, hidden_channels, 1)
+    self.pitch_net = attentions.Encoder(
+        hidden_channels,
+        filter_channels,
+        n_heads,
+        n_layers,
+        kernel_size,
+        p_dropout)
+    self.pitch_proj = nn.Conv1d(hidden_channels, 1, 1)
+
+  def forward(self,x,x_mask, pitch=None, pitch_control=1):
+      if pitch != None:
+          log_pitch = 2595. * torch.log10(1. + pitch.unsqueeze(1) / 700.) / 500
+          pitch_emb = self.prenet(log_pitch) * x_mask
+          pred_log_pitch = self.pitch_net(x.detach()) * x_mask
+          loss_pitch = F.mse_loss(log_pitch, pred_log_pitch)
+          return loss_pitch, pitch_emb
+      else:
+          pred_log_pitch = self.pitch_net(x) * x_mask
+          pitch_emb = self.prenet(pred_log_pitch * pitch_control) * x_mask
+          return pitch_emb, None
+
 
 class TextEncoder(nn.Module):
   def __init__(self,
@@ -165,17 +204,26 @@ class TextEncoder(nn.Module):
       kernel_size,
       p_dropout)
     self.proj= nn.Conv1d(hidden_channels, out_channels * 2, 1)
+    self.pitch_net = PitchPredictor(out_channels,
+      hidden_channels,
+      filter_channels,
+      n_heads,
+      n_layers,
+      kernel_size,
+      p_dropout)
 
-  def forward(self, x, x_lengths, lang):
+  def forward(self, x, x_lengths, lang, pitch=None, pitch_control=1):
     x = (self.emb(x) + self.emb_lang(lang)) * math.sqrt(self.hidden_channels) # [b, t, h]
     x = torch.transpose(x, 1, -1) # [b, h, t]
     x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
     x = self.encoder(x * x_mask, x_mask)
+    pitch_emb, pitch_loss = self.pitch_net(x, x_mask, pitch, pitch_control)
+    x += pitch_emb
     stats = self.proj(x) * x_mask
 
     m, logs = torch.split(stats, self.out_channels, dim=1)
-    return x, m, logs, x_mask
+    return x, m, logs, x_mask, pitch_loss
 
 
 class ResidualCouplingBlock(nn.Module):
@@ -458,9 +506,9 @@ class SynthesizerTrn(nn.Module):
     if n_speakers > 1:
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
-  def forward(self, x, x_lengths, lang, y, y_lengths, sid=None):
+  def forward(self, x, x_lengths, lang, pitch, y, y_lengths, sid=None):
 
-    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
+    x, m_p, logs_p, x_mask, pitch_loss = self.enc_p(x, x_lengths, lang, pitch)
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:
@@ -496,10 +544,10 @@ class SynthesizerTrn(nn.Module):
 
     z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
-    return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
+    return o, l_length, attn,torch.ceil(w), ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
 
-  def infer(self, x, x_lengths, lang, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None):
-    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
+  def infer(self, x, x_lengths, lang, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None, pitch_control=1):
+    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang, pitch_control=pitch_control)
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:

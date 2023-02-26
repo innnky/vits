@@ -1,5 +1,7 @@
 import copy
 import math
+from collections import defaultdict
+
 import numpy as np
 import scipy
 import torch
@@ -15,6 +17,41 @@ from transforms import piecewise_rational_quadratic_transform
 
 
 LRELU_SLOPE = 0.1
+
+class PhonePitchCalculater:
+    def __init__(self):
+        self.audio_path_duration_map = defaultdict(dict)
+
+    def get_phone_pitch(self, f0s,spec_lengths, x, x_lengths, speakers, audio_paths):
+        phone_pitchs = torch.zeros_like(x).to(f0s.device)
+        for i in range(f0s.shape[0]):
+            spkmap = self.audio_path_duration_map[speakers[i]]
+            audio_path = audio_paths[i]
+            x_length = x_lengths[i]
+            f0 = f0s[i, :]
+            f0_length = spec_lengths[i]
+            if spkmap == {}:
+                continue
+            if audio_path not in spkmap.keys():
+                continue
+            durations = spkmap[audio_path]
+            assert durations.shape[0] == x_length
+            assert durations.sum() == f0_length
+            pitch = self.calc_phone_pitch(durations, f0)
+            phone_pitchs[i, :x_length] = pitch
+        return phone_pitchs
+
+    def calc_phone_pitch(self, durations, f0):
+        phone_f0 = torch.split(f0, list(durations))
+        phone_pitch = torch.stack([torch.mean(x) for x in phone_f0])
+        return phone_pitch
+
+    def update(self, speakers, audio_paths, durations, x_lengths):
+        for i in range(speakers.shape[0]):
+            speaker = speakers[i]
+            audio_path = audio_paths[i]
+            x_length = x_lengths[i]
+            self.audio_path_duration_map[speaker][audio_path] = durations[i, :x_length]
 
 
 class LayerNorm(nn.Module):

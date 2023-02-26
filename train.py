@@ -16,6 +16,8 @@ from torch.cuda.amp import autocast, GradScaler
 import librosa
 import logging
 
+from modules import PhonePitchCalculater
+
 logging.getLogger('numba').setLevel(logging.WARNING)
 
 import commons
@@ -124,19 +126,19 @@ def run(rank, n_gpus, hps):
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
     scaler = GradScaler(enabled=hps.train.fp16_run)
-
+    pitch_calculater = PhonePitchCalculater()
     for epoch in range(epoch_str, hps.train.epochs + 1):
         if rank == 0:
-            train_and_evaluate(rank, epoch, hps, [net_g, net_d], [optim_g, optim_d], [scheduler_g, scheduler_d], scaler,
+            train_and_evaluate(rank, epoch, hps, pitch_calculater, [net_g, net_d], [optim_g, optim_d], [scheduler_g, scheduler_d], scaler,
                                [train_loader, eval_loader], logger, [writer, writer_eval])
         else:
-            train_and_evaluate(rank, epoch, hps, [net_g, net_d], [optim_g, optim_d], [scheduler_g, scheduler_d], scaler,
+            train_and_evaluate(rank, epoch, hps, pitch_calculater, [net_g, net_d], [optim_g, optim_d], [scheduler_g, scheduler_d], scaler,
                                [train_loader, None], None, None)
         scheduler_g.step()
         scheduler_d.step()
 
 
-def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers):
+def train_and_evaluate(rank, epoch, hps, pitch_calculater, nets, optims, schedulers, scaler, loaders, logger, writers):
     net_g, net_d = nets
     optim_g, optim_d = optims
     scheduler_g, scheduler_d = schedulers
@@ -149,17 +151,18 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
     net_g.train()
     net_d.train()
-    for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers) in enumerate(train_loader):
+    for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers, f0, audio_paths) in enumerate(train_loader):
         x, x_lengths = x.cuda(rank, non_blocking=True), x_lengths.cuda(rank, non_blocking=True)
         spec, spec_lengths = spec.cuda(rank, non_blocking=True), spec_lengths.cuda(rank, non_blocking=True)
         y, y_lengths = y.cuda(rank, non_blocking=True), y_lengths.cuda(rank, non_blocking=True)
         speakers = speakers.cuda(rank, non_blocking=True)
         lang = lang.cuda(rank, non_blocking=True)
-
+        f0 = f0.cuda(rank, non_blocking=True)
+        pitch = pitch_calculater.get_phone_pitch(f0, spec_lengths, x, x_lengths, speakers, audio_paths)
         with autocast(enabled=hps.train.fp16_run):
-            y_hat, l_length, attn, ids_slice, x_mask, z_mask, \
-            (z, z_p, m_p, logs_p, m_q, logs_q) = net_g(x, x_lengths, lang, spec, spec_lengths, speakers)
-
+            y_hat, l_length, attn, durations, ids_slice, x_mask, z_mask, \
+            (z, z_p, m_p, logs_p, m_q, logs_q) = net_g(x, x_lengths, lang,pitch, spec, spec_lengths, speakers, f0)
+            pitch_calculater.update(speakers, audio_paths, durations, x_lengths)
             mel = spec_to_mel_torch(
                 spec,
                 hps.data.filter_length,
@@ -260,49 +263,50 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     image_dict = {}
     audio_dict = {}
     with torch.no_grad():
-        for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers) in enumerate(eval_loader):
-            x, x_lengths = x.cuda(0), x_lengths.cuda(0)
-            spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
-            y, y_lengths = y.cuda(0), y_lengths.cuda(0)
-            speakers = speakers.cuda(0)
-            lang = lang.cuda(0)
+        for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers, f0) in enumerate(eval_loader):
+            for pitch_control in [0.8, 1, 1.3]:
+                x, x_lengths = x.cuda(0), x_lengths.cuda(0)
+                spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
+                y, y_lengths = y.cuda(0), y_lengths.cuda(0)
+                speakers = speakers.cuda(0)
+                lang = lang.cuda(0)
 
-            # remove else
-            x = x[:1]
-            x_lengths = x_lengths[:1]
-            spec = spec[:1]
-            spec_lengths = spec_lengths[:1]
-            y = y[:1]
-            y_lengths = y_lengths[:1]
-            speakers = speakers[:1]
-            y_hat, attn, mask, *_ = generator.module.infer(x, x_lengths, lang, speakers, max_len=1000)
-            y_hat_lengths = mask.sum([1, 2]).long() * hps.data.hop_length
+                # remove else
+                x = x[:1]
+                x_lengths = x_lengths[:1]
+                spec = spec[:1]
+                spec_lengths = spec_lengths[:1]
+                y = y[:1]
+                y_lengths = y_lengths[:1]
+                speakers = speakers[:1]
+                y_hat, attn, mask, *_ = generator.module.infer(x, x_lengths, lang, speakers, max_len=1000, pitch_control=pitch_control)
+                y_hat_lengths = mask.sum([1, 2]).long() * hps.data.hop_length
 
-            mel = spec_to_mel_torch(
-                spec,
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax)
-            y_hat_mel = mel_spectrogram_torch(
-                y_hat.squeeze(1).float(),
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.hop_length,
-                hps.data.win_length,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax
-            )
-            image_dict.update({
-                f"gen/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(y_hat_mel[0].cpu().numpy())
-            })
-            audio_dict.update({
-                f"gen/audio_{batch_idx}": y_hat[0, :, :y_hat_lengths[0]]
-            })
-            image_dict.update({f"gt/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(mel[0].cpu().numpy())})
-            audio_dict.update({f"gt/audio_{batch_idx}": y[0, :, :y_lengths[0]]})
+                mel = spec_to_mel_torch(
+                    spec,
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax)
+                y_hat_mel = mel_spectrogram_torch(
+                    y_hat.squeeze(1).float(),
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.hop_length,
+                    hps.data.win_length,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax
+                )
+                image_dict.update({
+                    f"gen/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(y_hat_mel[0].cpu().numpy())
+                })
+                audio_dict.update({
+                    f"gen/audio_{batch_idx}_{pitch_control}": y_hat[0, :, :y_hat_lengths[0]]
+                })
+                image_dict.update({f"gt/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(mel[0].cpu().numpy())})
+                audio_dict.update({f"gt/audio_{batch_idx}": y[0, :, :y_lengths[0]]})
 
     utils.summarize(
         writer=writer_eval,

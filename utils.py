@@ -5,7 +5,10 @@ import argparse
 import logging
 import json
 import subprocess
+
+import librosa
 import numpy as np
+import parselmouth
 from scipy.io.wavfile import read
 import torch
 
@@ -14,6 +17,34 @@ MATPLOTLIB_FLAG = False
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging
 
+
+
+def get_pitch(path,lll):
+    """
+    :param wav_data: [T]
+    :param mel: [T, 80]
+    :param config:
+    :return:
+    """
+    fs = 44100
+    hop = 512
+    sampling_rate = fs
+    hop_length = hop
+    wav_data, _ = librosa.load(path,sampling_rate)
+    time_step = hop_length / sampling_rate * 1000
+    f0_min = 80
+    f0_max = 750
+
+    f0 = parselmouth.Sound(wav_data, sampling_rate).to_pitch_ac(
+        time_step=time_step / 1000, voicing_threshold=0.6,
+        pitch_floor=f0_min, pitch_ceiling=f0_max).selected_array["frequency"]
+    lpad = 2
+    rpad = lll - len(f0) - lpad
+    assert 0<=rpad<=2,(len(f0), lll, len(wav_data)//hop_length)
+    assert 0<=( lll- len(wav_data)//hop_length)<=1
+    f0 = np.pad(f0, [[lpad, rpad]], mode="constant")
+
+    return f0
 
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False):

@@ -6,6 +6,7 @@ import torch
 import torch.utils.data
 
 import commons
+import utils
 from mel_processing import spectrogram_torch
 from utils import load_wav_to_torch, load_filepaths_and_text
 from text import cleaned_text_to_sequence
@@ -62,7 +63,8 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         text, lang = self.get_text(text, lang)
         spec, wav = self.get_audio(audiopath)
         sid = self.get_sid(sid)
-        return (text, spec, wav, sid, lang)
+        f0 = self.get_f0(audiopath, spec.shape[-1])
+        return (text, spec, wav, sid, lang, f0, audiopath)
 
     def get_audio(self, filename):
         audio, sampling_rate = load_wav_to_torch(filename)
@@ -96,6 +98,58 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         sid = torch.LongTensor([int(sid)])
         return sid
 
+    def interpolate_f0(self, data):
+        '''
+        对F0进行插值处理
+        '''
+        data = np.reshape(data, (data.size, 1))
+
+        vuv_vector = np.zeros((data.size, 1),dtype=np.float32)
+        vuv_vector[data > 0.0] = 1.0
+        vuv_vector[data <= 0.0] = 0.0
+
+        ip_data = data
+
+        frame_number = data.size
+        last_value = 0.0
+        for i in range(frame_number):
+            if data[i] <= 0.0:
+                j = i + 1
+                for j in range(i + 1, frame_number):
+                    if data[j] > 0.0:
+                        break
+                if j < frame_number - 1:
+                    if last_value > 0.0:
+                        step = (data[j] - data[i - 1]) / float(j - i)
+                        for k in range(i, j):
+                            ip_data[k] = data[i - 1] + step * (k - i + 1)
+                    else:
+                        for k in range(i, j):
+                            ip_data[k] = data[j]
+                else:
+                    for k in range(i, frame_number):
+                        ip_data[k] = last_value
+            else:
+                ip_data[i] = data[i]
+                last_value = data[i]
+
+        return ip_data, vuv_vector
+
+
+    def get_f0(self, wav_path, sumdur):
+        f0_path = wav_path + ".f0.npy"
+        try:
+            assert os.path.exists(f0_path)
+            f0 = np.load(f0_path)
+            assert f0.shape[0] == sumdur
+        except:
+            f0 = utils.get_pitch(wav_path, sumdur)
+            f0 = self.interpolate_f0(f0)[0][:, 0]
+            np.save(f0_path, f0)
+            assert f0.shape[0] == sumdur
+
+        f0 = torch.FloatTensor(f0)
+        return f0
     def __getitem__(self, index):
         return self.get_audio_text_speaker_pair(self.audiopaths_sid_text[index])
 
@@ -133,11 +187,13 @@ class TextAudioSpeakerCollate():
         text_padded = torch.LongTensor(len(batch), max_text_len)
         lang_padded = torch.LongTensor(len(batch), max_text_len)
         spec_padded = torch.FloatTensor(len(batch), batch[0][1].size(0), max_spec_len)
+        f0_padded = torch.FloatTensor(len(batch), max_spec_len)
         wav_padded = torch.FloatTensor(len(batch), 1, max_wav_len)
         text_padded.zero_()
         lang_padded.zero_()
         spec_padded.zero_()
         wav_padded.zero_()
+        audio_paths = []
         for i in range(len(ids_sorted_decreasing)):
             row = batch[ids_sorted_decreasing[i]]
 
@@ -158,8 +214,12 @@ class TextAudioSpeakerCollate():
             lang = row[4]
             lang_padded[i, :lang.size(0)] = lang
 
+            f0 = row[5]
+            f0_padded[i, :f0.size(0)] = f0
 
-        return text_padded, text_lengths,lang_padded, spec_padded, spec_lengths, wav_padded, wav_lengths, sid
+            audio_paths.append(row[6])
+
+        return text_padded, text_lengths,lang_padded, spec_padded, spec_lengths, wav_padded, wav_lengths, sid, f0_padded, audio_paths
 
 
 class DistributedBucketSampler(torch.utils.data.distributed.DistributedSampler):
