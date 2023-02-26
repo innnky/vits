@@ -161,13 +161,13 @@ class PitchPredictor(nn.Module):
   def forward(self,x,x_mask, pitch=None, pitch_control=1):
       if pitch != None:
           log_pitch = 2595. * torch.log10(1. + pitch.unsqueeze(1) / 700.) / 500
-          pitch_emb = self.prenet(log_pitch) * x_mask
-          pred_log_pitch = self.pitch_net(x.detach()) * x_mask
+          pitch_emb = self.pitch_prenet(log_pitch) * x_mask
+          pred_log_pitch = self.pitch_proj(self.pitch_net(x.detach(), x_mask)) * x_mask
           loss_pitch = F.mse_loss(log_pitch, pred_log_pitch)
-          return loss_pitch, pitch_emb
+          return pitch_emb, loss_pitch
       else:
-          pred_log_pitch = self.pitch_net(x) * x_mask
-          pitch_emb = self.prenet(pred_log_pitch * pitch_control) * x_mask
+          pred_log_pitch = self.pitch_proj(self.pitch_net(x.detach(), x_mask)) * x_mask
+          pitch_emb = self.pitch_prenet(pred_log_pitch * pitch_control) * x_mask
           return pitch_emb, None
 
 
@@ -544,10 +544,10 @@ class SynthesizerTrn(nn.Module):
 
     z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
-    return o, l_length, attn,torch.ceil(w), ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
+    return o, l_length,pitch_loss, attn,torch.ceil(w), ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
 
   def infer(self, x, x_lengths, lang, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None, pitch_control=1):
-    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang, pitch_control=pitch_control)
+    x, m_p, logs_p, x_mask, _ = self.enc_p(x, x_lengths, lang, pitch_control=pitch_control)
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:

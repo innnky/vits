@@ -158,11 +158,11 @@ def train_and_evaluate(rank, epoch, hps, pitch_calculater, nets, optims, schedul
         speakers = speakers.cuda(rank, non_blocking=True)
         lang = lang.cuda(rank, non_blocking=True)
         f0 = f0.cuda(rank, non_blocking=True)
-        pitch = pitch_calculater.get_phone_pitch(f0, spec_lengths, x, x_lengths, speakers, audio_paths)
+        pitch = pitch_calculater.get_phone_pitch(f0, spec_lengths, x, x_lengths, audio_paths)
         with autocast(enabled=hps.train.fp16_run):
-            y_hat, l_length, attn, durations, ids_slice, x_mask, z_mask, \
-            (z, z_p, m_p, logs_p, m_q, logs_q) = net_g(x, x_lengths, lang,pitch, spec, spec_lengths, speakers, f0)
-            pitch_calculater.update(speakers, audio_paths, durations, x_lengths)
+            y_hat, l_length,pitch_loss, attn, durations, ids_slice, x_mask, z_mask, \
+            (z, z_p, m_p, logs_p, m_q, logs_q) = net_g(x, x_lengths, lang,pitch, spec, spec_lengths, speakers)
+            pitch_calculater.update(audio_paths, durations, x_lengths)
             mel = spec_to_mel_torch(
                 spec,
                 hps.data.filter_length,
@@ -202,10 +202,10 @@ def train_and_evaluate(rank, epoch, hps, pitch_calculater, nets, optims, schedul
                 loss_dur = torch.sum(l_length.float())
                 loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
-
+                pitch_loss = pitch_loss.float()
                 loss_fm = feature_loss(fmap_r, fmap_g)
                 loss_gen, losses_gen = generator_loss(y_d_hat_g)
-                loss_gen_all = loss_gen + loss_fm + loss_mel + loss_dur + loss_kl
+                loss_gen_all = loss_gen + loss_fm + loss_mel + loss_dur + loss_kl + pitch_loss
         optim_g.zero_grad()
         scaler.scale(loss_gen_all).backward()
         scaler.unscale_(optim_g)
@@ -225,11 +225,12 @@ def train_and_evaluate(rank, epoch, hps, pitch_calculater, nets, optims, schedul
                 scalar_dict = {"loss/g/total": loss_gen_all, "loss/d/total": loss_disc_all, "learning_rate": lr,
                                "grad_norm_d": grad_norm_d, "grad_norm_g": grad_norm_g}
                 scalar_dict.update(
-                    {"loss/g/fm": loss_fm, "loss/g/mel": loss_mel, "loss/g/dur": loss_dur, "loss/g/kl": loss_kl})
+                    {"loss/g/fm": loss_fm, "loss/g/mel": loss_mel, "loss/g/dur": loss_dur,
+                     "loss/g/kl": loss_kl, "loss/pitch": pitch_loss})
 
-                scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
-                scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
-                scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
+                # scalar_dict.update({"loss/g/{}".format(i): v for i, v in enumerate(losses_gen)})
+                # scalar_dict.update({"loss/d_r/{}".format(i): v for i, v in enumerate(losses_disc_r)})
+                # scalar_dict.update({"loss/d_g/{}".format(i): v for i, v in enumerate(losses_disc_g)})
                 image_dict = {
                     "slice/mel_org": utils.plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),
                     "slice/mel_gen": utils.plot_spectrogram_to_numpy(y_hat_mel[0].data.cpu().numpy()),
@@ -263,7 +264,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     image_dict = {}
     audio_dict = {}
     with torch.no_grad():
-        for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers, f0) in enumerate(eval_loader):
+        for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers, f0, _) in enumerate(eval_loader):
             for pitch_control in [0.8, 1, 1.3]:
                 x, x_lengths = x.cuda(0), x_lengths.cuda(0)
                 spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
