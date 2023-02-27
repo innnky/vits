@@ -43,6 +43,9 @@ class PhonePitchCalculater:
             assert durations.shape[0] == x_length
             assert durations.sum() == f0_length
             pitch = self.calc_phone_pitch(durations, f0[:f0_length])
+            if torch.isnan(pitch).any():
+                print("pitch nan")
+                continue
             phone_pitchs[i, :x_length] = pitch
         # print(phone_pitchs)
 

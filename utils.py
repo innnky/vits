@@ -66,6 +66,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False
             # print("load", k)
             new_state_dict[k] = saved_state_dict[k]
             assert saved_state_dict[k].shape == v.shape, (saved_state_dict[k].shape, v.shape)
+            assert not torch.isnan(saved_state_dict[k]).any()
         except:
             print("error, %s is not in the checkpoint" % k)
             logger.info("%s is not in the checkpoint" % k)

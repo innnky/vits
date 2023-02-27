@@ -126,7 +126,12 @@ def run(rank, n_gpus, hps):
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2)
 
     scaler = GradScaler(enabled=hps.train.fp16_run)
-    pitch_calculater = PhonePitchCalculater()
+    try:
+        pitch_calculater = torch.load("durations.pt")
+        print("loaded pitch_calculater")
+    except:
+        pitch_calculater = PhonePitchCalculater()
+        print("init new pitch_calculater")
     for epoch in range(epoch_str, hps.train.epochs + 1):
         if rank == 0:
             train_and_evaluate(rank, epoch, hps, pitch_calculater, [net_g, net_d], [optim_g, optim_d], [scheduler_g, scheduler_d], scaler,
@@ -249,6 +254,7 @@ def train_and_evaluate(rank, epoch, hps, pitch_calculater, nets, optims, schedul
                                       os.path.join(hps.model_dir, "G_{}.pth".format(global_step)))
                 utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch,
                                       os.path.join(hps.model_dir, "D_{}.pth".format(global_step)))
+                torch.save(pitch_calculater, "durations.pt")
                 keep_ckpts = getattr(hps.train, 'keep_ckpts', 0)
                 if keep_ckpts > 0:
                     utils.clean_checkpoints(path_to_models=hps.model_dir, n_ckpts_to_keep=keep_ckpts, sort_by_time=True)
@@ -266,6 +272,8 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     with torch.no_grad():
         for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers, f0, _) in enumerate(eval_loader):
             for pitch_control in [0.8, 1, 1.3]:
+                if batch_idx!=0 and  pitch_control !=1:
+                    continue
                 x, x_lengths = x.cuda(0), x_lengths.cuda(0)
                 spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
                 y, y_lengths = y.cuda(0), y_lengths.cuda(0)
