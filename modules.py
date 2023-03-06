@@ -48,7 +48,7 @@ class PhonePitchCalculater:
                 continue
             phone_pitchs[i, :x_length] = pitch
         # print(phone_pitchs)
-
+        assert not torch.isnan(phone_pitchs).any()
         return phone_pitchs
 
     def calc_phone_pitch(self, durations, f0):
