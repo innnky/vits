@@ -106,7 +106,7 @@ def run(rank, n_gpus, hps):
     net_g = DDP(net_g, device_ids=[rank])
     net_d = DDP(net_d, device_ids=[rank])
 
-    skip_optimizer = True
+    skip_optimizer = False
     try:
         _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g,
                                                    optim_g, skip_optimizer)
@@ -165,8 +165,10 @@ def train_and_evaluate(rank, epoch, hps, pitch_calculater, nets, optims, schedul
         f0 = f0.cuda(rank, non_blocking=True)
         pitch = pitch_calculater.get_phone_pitch(f0, spec_lengths, x, x_lengths, audio_paths)
         with autocast(enabled=hps.train.fp16_run):
-            y_hat, l_length,pitch_loss, attn, durations, ids_slice, x_mask, z_mask, \
+            y_hat, l_length,pitch_loss, pred_log_pitch, log_pitch, attn, durations, ids_slice, x_mask, z_mask, \
             (z, z_p, m_p, logs_p, m_q, logs_q) = net_g(x, x_lengths, lang,pitch, spec, spec_lengths, speakers)
+            assert not torch.isnan(pitch_loss).any(),pitch_loss
+
             pitch_calculater.update(audio_paths, durations, x_lengths)
             mel = spec_to_mel_torch(
                 spec,
@@ -240,7 +242,9 @@ def train_and_evaluate(rank, epoch, hps, pitch_calculater, nets, optims, schedul
                     "slice/mel_org": utils.plot_spectrogram_to_numpy(y_mel[0].data.cpu().numpy()),
                     "slice/mel_gen": utils.plot_spectrogram_to_numpy(y_hat_mel[0].data.cpu().numpy()),
                     "all/mel": utils.plot_spectrogram_to_numpy(mel[0].data.cpu().numpy()),
-                    "all/attn": utils.plot_alignment_to_numpy(attn[0, 0].data.cpu().numpy())
+                    "all/attn": utils.plot_alignment_to_numpy(attn[0, 0].data.cpu().numpy()),
+                    "all/norm_lf0": utils.plot_data_to_numpy(log_pitch[0, 0, :].cpu().numpy(),
+                                                             pred_log_pitch[0, 0, :].detach().cpu().numpy())
                 }
                 utils.summarize(
                     writer=writer,

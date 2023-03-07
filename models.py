@@ -1,5 +1,7 @@
 import copy
 import math
+import sys
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -169,13 +171,19 @@ class PitchPredictor(nn.Module):
       if pitch != None:
           log_pitch = 2595. * torch.log10(1. + pitch.unsqueeze(1) / 700.) / 500
           pitch_emb = self.pitch_prenet(log_pitch) * x_mask
-          pred_log_pitch = self.pitch_proj(self.pitch_net(x, x_mask)) * x_mask
+          pred_log_pitch = self.pitch_proj(self.pitch_net(x * x_mask, x_mask)*x_mask) * x_mask
+          if torch.isnan(pred_log_pitch).any() or torch.isnan(log_pitch).any():
+              for i in range(12):
+                  print(pred_log_pitch[i, 0, :])
+                  print(log_pitch[i, 0, :])
+                  print()
+              sys.exit(-1)
           loss_pitch = F.mse_loss(log_pitch, pred_log_pitch)
-          return pitch_emb, loss_pitch
+          return pitch_emb, loss_pitch, pred_log_pitch, log_pitch
       else:
           pred_log_pitch = self.pitch_proj(self.pitch_net(x, x_mask)) * x_mask
           pitch_emb = self.pitch_prenet(pred_log_pitch * pitch_control) * x_mask
-          return pitch_emb, None
+          return pitch_emb, None, None, None
 
 
 class TextEncoder(nn.Module):
@@ -234,13 +242,13 @@ class TextEncoder(nn.Module):
     x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
     x = self.encoder(x * x_mask, x_mask)
-    pitch_emb, pitch_loss = self.pitch_net(x, x_mask, g, pitch, pitch_control)
+    pitch_emb, pitch_loss, pred_log_pitch, log_pitch = self.pitch_net(x, x_mask, g, pitch, pitch_control)
     pitch_x = self.pitch_encoder((x+pitch_emb) * x_mask, x_mask)
 
     stats = self.proj(pitch_x) * x_mask
 
     m, logs = torch.split(stats, self.out_channels, dim=1)
-    return x, m, logs, x_mask, pitch_loss
+    return x, m, logs, x_mask, pitch_loss, pred_log_pitch, log_pitch
 
 
 class ResidualCouplingBlock(nn.Module):
@@ -530,7 +538,7 @@ class SynthesizerTrn(nn.Module):
     else:
       g = None
 
-    x, m_p, logs_p, x_mask, pitch_loss = self.enc_p(x, x_lengths, lang, g, pitch)
+    x, m_p, logs_p, x_mask, pitch_loss, pred_log_pitch, log_pitch = self.enc_p(x, x_lengths, lang, g, pitch)
 
     z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
     z_p = self.flow(z, y_mask, g=g)
@@ -562,14 +570,14 @@ class SynthesizerTrn(nn.Module):
 
     z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
-    return o, l_length,pitch_loss, attn,torch.ceil(w), ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
+    return o, l_length,pitch_loss, pred_log_pitch, log_pitch, attn,torch.ceil(w), ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
 
   def infer(self, x, x_lengths, lang, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None, pitch_control=1):
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:
       g = None
-    x, m_p, logs_p, x_mask, _ = self.enc_p(x, x_lengths, lang, g, pitch_control=pitch_control)
+    x, m_p, logs_p, x_mask, _, _, _ = self.enc_p(x, x_lengths, lang, g, pitch_control=pitch_control)
 
     if self.use_sdp:
       logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)
