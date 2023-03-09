@@ -40,8 +40,12 @@ class PhonePitchCalculater:
                 continue
 
             durations = spkmap[audio_path]
-            assert durations.shape[0] == x_length
-            assert durations.sum() == f0_length
+            if not durations.shape[0] == x_length:
+                print("shape mismatch")
+                continue
+            if not durations.sum() == f0_length:
+                print("shape mismatch")
+                continue
             pitch = self.calc_phone_pitch(durations, f0[:f0_length])
             if torch.isnan(pitch).any():
                 print("pitch nan")
