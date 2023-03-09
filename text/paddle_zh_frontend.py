@@ -99,7 +99,7 @@ def zh_to_bopomofo(text):
 
 def pinyin_to_bopomofo(pinyin):
     bopomofos = bopomofo(pinyin)
-    return bopomofos.replace(" ", "").replace("#", " ")
+    return bopomofos.replace(" ", "").replace("#", " ").replace("%", "% ")
 
 def zh_to_phonemes(text):
     # 替换标点为英文标点
