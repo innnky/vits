@@ -275,7 +275,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     audio_dict = {}
     with torch.no_grad():
         for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers, f0, _) in enumerate(eval_loader):
-            for pitch_control in [0.8, 1, 1.3]:
+            for pitch_control in [0.9, 1, 1.1]:
                 if batch_idx!=0 and  pitch_control !=1:
                     continue
                 x, x_lengths = x.cuda(0), x_lengths.cuda(0)
