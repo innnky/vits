@@ -51,7 +51,7 @@ class Hyperparameters():
     # style token layer
     token_num = 10
     # token_emb_size = 256
-    num_heads = 8
+    num_heads = 1
     # multihead_attn_num_unit = 256
     # style_att_type = 'mlp_attention'
     # attn_normalize = True

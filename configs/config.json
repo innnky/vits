@@ -1,7 +1,7 @@
 {
   "train": {
-    "log_interval": 100,
-    "eval_interval": 1000,
+    "log_interval": 50,
+    "eval_interval": 400,
     "seed": 1234,
     "epochs": 10000,
     "learning_rate": 0.0002,
@@ -35,7 +35,7 @@
     "n_speakers": 200,
     "cleaned_text": true,
     "spk2id": {
-      "nyaru": 0,
+      "nen": 0,
       "jsut": 1,
       "engfemale": 2,
       "engmale": 3,
@@ -108,7 +108,8 @@
     ],
     "n_layers_q": 3,
     "use_spectral_norm": false,
-    "gin_channels": 256
+    "gin_channels": 256,
+    "token_num": 4
   },
-  "model_dir": "./logdir/nyaru"
+  "model_dir": "./logdir/nen"
 }

@@ -261,48 +261,49 @@ def evaluate(hps, generator, eval_loader, writer_eval):
     audio_dict = {}
     with torch.no_grad():
         for batch_idx, (x, x_lengths,lang, spec, spec_lengths, y, y_lengths, speakers) in enumerate(eval_loader):
-            x, x_lengths = x.cuda(0), x_lengths.cuda(0)
-            spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
-            y, y_lengths = y.cuda(0), y_lengths.cuda(0)
-            speakers = speakers.cuda(0)
-            lang = lang.cuda(0)
+            for token_id in [0,1,2]:
+                x, x_lengths = x.cuda(0), x_lengths.cuda(0)
+                spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
+                y, y_lengths = y.cuda(0), y_lengths.cuda(0)
+                speakers = speakers.cuda(0)
+                lang = lang.cuda(0)
 
-            # remove else
-            x = x[:1]
-            x_lengths = x_lengths[:1]
-            spec = spec[:1]
-            spec_lengths = spec_lengths[:1]
-            y = y[:1]
-            y_lengths = y_lengths[:1]
-            speakers = speakers[:1]
-            y_hat, attn, mask, *_ = generator.module.infer(x, x_lengths, lang, speakers, max_len=1000)
-            y_hat_lengths = mask.sum([1, 2]).long() * hps.data.hop_length
+                # remove else
+                x = x[:1]
+                x_lengths = x_lengths[:1]
+                spec = spec[:1]
+                spec_lengths = spec_lengths[:1]
+                y = y[:1]
+                y_lengths = y_lengths[:1]
+                speakers = speakers[:1]
+                y_hat, attn, mask, *_ = generator.module.infer(x, x_lengths, lang, token_id, max_len=1000)
+                y_hat_lengths = mask.sum([1, 2]).long() * hps.data.hop_length
 
-            mel = spec_to_mel_torch(
-                spec,
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax)
-            y_hat_mel = mel_spectrogram_torch(
-                y_hat.squeeze(1).float(),
-                hps.data.filter_length,
-                hps.data.n_mel_channels,
-                hps.data.sampling_rate,
-                hps.data.hop_length,
-                hps.data.win_length,
-                hps.data.mel_fmin,
-                hps.data.mel_fmax
-            )
-            image_dict.update({
-                f"gen/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(y_hat_mel[0].cpu().numpy())
-            })
-            audio_dict.update({
-                f"gen/audio_{batch_idx}": y_hat[0, :, :y_hat_lengths[0]]
-            })
-            image_dict.update({f"gt/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(mel[0].cpu().numpy())})
-            audio_dict.update({f"gt/audio_{batch_idx}": y[0, :, :y_lengths[0]]})
+                mel = spec_to_mel_torch(
+                    spec,
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax)
+                y_hat_mel = mel_spectrogram_torch(
+                    y_hat.squeeze(1).float(),
+                    hps.data.filter_length,
+                    hps.data.n_mel_channels,
+                    hps.data.sampling_rate,
+                    hps.data.hop_length,
+                    hps.data.win_length,
+                    hps.data.mel_fmin,
+                    hps.data.mel_fmax
+                )
+                image_dict.update({
+                    f"gen/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(y_hat_mel[0].cpu().numpy())
+                })
+                audio_dict.update({
+                    f"gen/audio_{batch_idx}_{token_id}": y_hat[0, :, :y_hat_lengths[0]]
+                })
+                image_dict.update({f"gt/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(mel[0].cpu().numpy())})
+                audio_dict.update({f"gt/audio_{batch_idx}": y[0, :, :y_lengths[0]]})
 
     utils.summarize(
         writer=writer_eval,
