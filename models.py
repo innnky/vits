@@ -11,6 +11,8 @@ import monotonic_align
 
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
+
+from GST import ReferenceEncoder
 from commons import init_weights, get_padding
 
 
@@ -393,8 +395,8 @@ class MultiPeriodDiscriminator(torch.nn.Module):
 
 class SynthesizerTrn(nn.Module):
     """
-  Synthesizer for Training
-  """
+        Synthesizer for Training
+    """
 
     def __init__(self,
                  n_vocab,
@@ -416,6 +418,7 @@ class SynthesizerTrn(nn.Module):
                  n_speakers=0,
                  gin_channels=0,
                  use_sdp=True,
+                 ref_channel=80,
                  **kwargs):
 
         super().__init__()
@@ -450,7 +453,9 @@ class SynthesizerTrn(nn.Module):
                                  p_dropout)
         self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates,
                              upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
-        self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16,
+        self.enc_q = PosteriorEncoder(spec_channels, inter_channels-ref_channel, hidden_channels-ref_channel, 5, 1, 16,
+                                      gin_channels=gin_channels)
+        self.enc_ref = PosteriorEncoder(ref_channel, ref_channel, ref_channel, 5, 1, 16,
                                       gin_channels=gin_channels)
         self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, gin_channels=gin_channels)
 
@@ -462,6 +467,8 @@ class SynthesizerTrn(nn.Module):
         if n_speakers > 1:
             self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
+        self.reference_encoder = ReferenceEncoder(spec_channels, ref_channel)
+
     def forward(self, x, x_lengths, lang, y, y_lengths, sid=None):
 
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
@@ -470,7 +477,14 @@ class SynthesizerTrn(nn.Module):
         else:
             g = None
 
+        reference_emb = self.reference_encoder(y)
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
+        z_ref, m_q_ref, logs_q_ref, y_mask = self.enc_q(reference_emb, y_lengths, g=g)
+
+        z = torch.cat([z, z_ref], dim=1)
+        logs_q = torch.cat([logs_q, logs_q_ref], dim=1)
+        m_q = torch.cat([m_q, m_q_ref], dim=1)
+
         z_p = self.flow(z, y_mask, g=g)
 
         with torch.no_grad():

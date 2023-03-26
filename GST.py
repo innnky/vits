@@ -90,8 +90,8 @@ class ReferenceEncoder(nn.Module):
     outputs --- [N, ref_enc_gru_size]
     '''
 
-    def __init__(self, hp):
-
+    def __init__(self, spec_channels, ref_channel):
+        hp = Hyperparameters
         super().__init__()
         K = len(hp.ref_enc_filters)
         filters = [1] + hp.ref_enc_filters
@@ -106,11 +106,13 @@ class ReferenceEncoder(nn.Module):
 
         out_channels = self.calculate_channels(hp.n_mels, 3, 2, 1, K)
         self.gru = nn.GRU(input_size=hp.ref_enc_filters[-1] * out_channels,
-                          hidden_size=hp.E // 2,
+                          hidden_size=ref_channel,
                           batch_first=True)
         self.n_mels = hp.n_mels
+        self.spec_prenet = nn.Conv1d(spec_channels, 80, 3, 1)
 
     def forward(self, inputs):
+        inputs = self.spec_prenet(inputs)
         N = inputs.size(0)
         out = inputs.view(N, 1, -1, self.n_mels)  # [N, 1, Ty, n_mels]
         for conv, bn in zip(self.convs, self.bns):
