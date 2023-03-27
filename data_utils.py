@@ -1,6 +1,8 @@
 import time
 import os
 import random
+
+import librosa
 import numpy as np
 import torch
 import torch.utils.data
@@ -50,6 +52,12 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         audiopaths_sid_text_new = []
         lengths = []
         for audiopath, sid, text, lang in self.audiopaths_sid_text:
+            if not os.path.exists(audiopath):
+                print(audiopath, "not exist!")
+                continue
+            # if librosa.get_duration(filename=audiopath)>10:
+            #     print("音频过长，跳过", audiopath)
+            #     continue
             if self.min_text_len <= len(text) and len(text) <= self.max_text_len:
                 audiopaths_sid_text_new.append([audiopath, sid, text, lang])
                 lengths.append(os.path.getsize(audiopath) // (2 * self.hop_length))

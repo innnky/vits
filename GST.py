@@ -212,6 +212,7 @@ class VAE_GST(nn.Module):
             eps = torch.randn_like(std)
             return eps.mul(std).add_(mu)
         else:
+            print(mu,logvar)
             return mu
 
     def forward(self, inputs):
@@ -234,10 +235,19 @@ class VAE_GST(nn.Module):
         elif anneal_function == 'constant':
             return 0.001
 
+    def anneal_weight(self, start_step, end_step, start_w, end_w, current_step):
+        if current_step < start_step:
+            return start_w
+        elif current_step < end_step:
+            return ((end_w - start_w) * (current_step - start_step) / (end_step - start_step)) + start_w
+        else:
+            return end_w
+
     def kl_loss(self, logvar, mu, step):
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        kl_weight = self.kl_anneal_function("logistic", 50000, step, 0.0025, 10000, 0.2)
-        return  kl_weight*kl_loss
+        # kl_weight = self.kl_anneal_function("logistic", lag=50000, step=step, k=0.0025, x0=10000, upper=0.2)
+        kl_weight = self.anneal_weight(50000, 55000, 0, 0.2, step)
+        return  kl_loss, kl_weight
 
 if __name__ == '__main__':
     spec = torch.zeros([8, 1025, 454])

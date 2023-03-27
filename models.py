@@ -468,7 +468,7 @@ class SynthesizerTrn(nn.Module):
 
     def forward(self, x, x_lengths, lang, y, y_lengths, step):
         style_embed, mu, logvar, z = self.gst(y)
-        style_kl = self.gst.kl_loss(mu, logvar, step)
+        style_kl, style_weight = self.gst.kl_loss(mu, logvar, step)
         g = style_embed.unsqueeze(-1)
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang, g)
 
@@ -503,7 +503,7 @@ class SynthesizerTrn(nn.Module):
 
         z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
         o = self.dec(z_slice, g=g)
-        return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q), style_kl
+        return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q), style_kl, style_weight
 
     def infer(self, x, x_lengths, lang, y=None, noise_scale=0.6, length_scale=1.1, noise_scale_w=0.7, max_len=None):
         style_embed, mu, logvar, z = self.gst(y)
