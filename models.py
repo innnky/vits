@@ -12,7 +12,7 @@ import monotonic_align
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 
-from GST import GST
+from GST import VAE_GST
 from commons import init_weights, get_padding
 
 
@@ -464,11 +464,12 @@ class SynthesizerTrn(nn.Module):
 
         # if n_speakers > 1:
         #     self.emb_g = nn.Embedding(n_speakers, gin_channels)
-        self.gst = GST(token_num)
-        self.gst_prenet = nn.Conv1d(spec_channels, 80, 3, 1)
+        self.gst = VAE_GST(spec_channels, 256)
 
-    def forward(self, x, x_lengths, lang, y, y_lengths, sid=None):
-        g = self.gst(self.gst_prenet(y)).transpose(1,2)
+    def forward(self, x, x_lengths, lang, y, y_lengths, step):
+        style_embed, mu, logvar, z = self.gst(y)
+        style_kl = self.gst.kl_loss(mu, logvar, step)
+        g = style_embed.unsqueeze(-1)
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang, g)
 
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
@@ -502,10 +503,12 @@ class SynthesizerTrn(nn.Module):
 
         z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
         o = self.dec(z_slice, g=g)
-        return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
+        return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q), style_kl
 
-    def infer(self, x, x_lengths, lang, token_id=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None):
-        g = self.gst.forward_token(token_id).transpose(1,2)
+    def infer(self, x, x_lengths, lang, y=None, noise_scale=0.6, length_scale=1.1, noise_scale_w=0.7, max_len=None):
+        style_embed, mu, logvar, z = self.gst(y)
+        g = style_embed.unsqueeze(-1)
+
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang, g)
 
         if self.use_sdp:

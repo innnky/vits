@@ -1,5 +1,5 @@
 # source from https://github.com/KinglittleQ/GST-Tacotron/blob/master/GST.py
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -90,8 +90,8 @@ class ReferenceEncoder(nn.Module):
     outputs --- [N, ref_enc_gru_size]
     '''
 
-    def __init__(self, hp):
-
+    def __init__(self, spec_channels, ref_channel):
+        hp = Hyperparameters
         super().__init__()
         K = len(hp.ref_enc_filters)
         filters = [1] + hp.ref_enc_filters
@@ -106,11 +106,13 @@ class ReferenceEncoder(nn.Module):
 
         out_channels = self.calculate_channels(hp.n_mels, 3, 2, 1, K)
         self.gru = nn.GRU(input_size=hp.ref_enc_filters[-1] * out_channels,
-                          hidden_size=hp.E // 2,
+                          hidden_size=ref_channel,
                           batch_first=True)
         self.n_mels = hp.n_mels
+        self.spec_prenet = nn.Conv1d(spec_channels, 80, 3, 1)
 
     def forward(self, inputs):
+        inputs = self.spec_prenet(inputs)
         N = inputs.size(0)
         out = inputs.view(N, 1, -1, self.n_mels)  # [N, 1, Ty, n_mels]
         for conv, bn in zip(self.convs, self.bns):
@@ -131,6 +133,7 @@ class ReferenceEncoder(nn.Module):
         for _ in range(n_convs):
             L = (L - kernel_size + 2 * pad) // stride + 1
         return L
+
 
 
 class STL(nn.Module):
@@ -195,25 +198,46 @@ class MultiHeadAttention(nn.Module):
         return out
 
 
-class GST(nn.Module):
-    def __init__(self, token_num):
+class VAE_GST(nn.Module):
+    def __init__(self, spec_c, style_emb_c):
         super().__init__()
+        self.ref_encoder = ReferenceEncoder(spec_c, 256)
+        self.fc1 = nn.Linear(256, 32)
+        self.fc2 = nn.Linear(256, 32)
+        self.fc3 = nn.Linear(32, style_emb_c)
 
-        self.encoder = ReferenceEncoder(Hyperparameters)
-        self.stl = STL(Hyperparameters,token_num)
+    def reparameterize(self, mu, logvar):
+        if self.training:
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            return eps.mul(std).add_(mu)
+        else:
+            return mu
 
     def forward(self, inputs):
-        enc_out = self.encoder(inputs)
-        style_embed = self.stl(enc_out)
+        enc_out = self.ref_encoder(inputs)
+        mu = self.fc1(enc_out)
+        logvar = self.fc2(enc_out)
+        z = self.reparameterize(mu, logvar)
+        style_embed = self.fc3(z)
 
-        return style_embed
+        return style_embed, mu, logvar, z
 
-    def forward_token(self, token_id):
-        N = 1
-        keys = F.tanh(self.stl.embed).unsqueeze(0).expand(N, -1, -1)  # [N, token_num, E // num_heads]
-        values = self.stl.attention.W_value(keys)
-        out = values[:, token_id, :].unsqueeze(1)
-        return out
+    def kl_anneal_function(self, anneal_function, lag, step, k, x0, upper):
+        if anneal_function == 'logistic':
+            return float(upper/(upper+np.exp(-k*(step-x0))))
+        elif anneal_function == 'linear':
+            if step > lag:
+                return min(upper, step/x0)
+            else:
+                return 0
+        elif anneal_function == 'constant':
+            return 0.001
+
+    def kl_loss(self, logvar, mu, step):
+        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        kl_weight = self.kl_anneal_function("logistic", 50000, step, 0.0025, 10000, 0.2)
+        return  kl_weight*kl_loss
 
 if __name__ == '__main__':
     spec = torch.zeros([8, 1025, 454])
