@@ -39,7 +39,7 @@ class Frontend():
         self.punc = ['!', '?', '…', ",", ".", "#", '-', "%", "$"]
         # g2p_model can be pypinyin and g2pM
         self.g2p_model = g2p_model
-        self.add_word_sep = False
+        self.add_word_sep = True
         if self.g2p_model == "g2pM":
             self.g2pM_model = G2pM()
             self.pinyin2phone = generate_lexicon(
