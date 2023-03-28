@@ -158,7 +158,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
         with autocast(enabled=hps.train.fp16_run):
             y_hat, l_length, attn, ids_slice, x_mask, z_mask, \
-            (z, z_p, m_p, logs_p, m_q, logs_q)= net_g(x, x_lengths, lang, spec, spec_lengths)
+            (z, z_p, m_p, logs_p, m_q, logs_q), gst_predict_loss= net_g(x, x_lengths, lang, spec, spec_lengths, speakers)
 
             mel = spec_to_mel_torch(
                 spec,
@@ -202,7 +202,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
                 loss_fm = feature_loss(fmap_r, fmap_g)
                 loss_gen, losses_gen = generator_loss(y_d_hat_g)
-                loss_gen_all = loss_gen + loss_fm + loss_mel + loss_dur + loss_kl
+                loss_gen_all = loss_gen + loss_fm + loss_mel + loss_dur + loss_kl + gst_predict_loss
         optim_g.zero_grad()
         scaler.scale(loss_gen_all).backward()
         scaler.unscale_(optim_g)
@@ -223,7 +223,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
                                "grad_norm_d": grad_norm_d, "grad_norm_g": grad_norm_g}
                 scalar_dict.update(
                     {"loss/g/fm": loss_fm, "loss/g/mel": loss_mel, "loss/g/dur": loss_dur,
-                     "loss/g/kl": loss_kl})
+                     "loss/g/kl": loss_kl, "loss/g/gst_predict_loss": gst_predict_loss})
 
 
                 image_dict = {
@@ -302,6 +302,14 @@ def evaluate(hps, generator, eval_loader, writer_eval):
             })
             image_dict.update({f"gt/mel_{batch_idx}": utils.plot_spectrogram_to_numpy(mel[0].cpu().numpy())})
             audio_dict.update({f"gt/audio_{batch_idx}": y[0, :, :y_lengths[0]]})
+        for sid in range(2):
+            speakers[:]=sid
+            y_hat, attn, mask, *_ = generator.module.infer(x, x_lengths, lang, spec, max_len=1000, predict_gst=True, sid=speakers)
+            y_hat_lengths = mask.sum([1, 2]).long() * hps.data.hop_length
+
+            audio_dict.update({
+                f"gen/audio_{sid}_pred_gst": y_hat[0, :, :y_hat_lengths[0]]
+            })
 
     utils.summarize(
         writer=writer_eval,
