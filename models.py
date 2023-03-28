@@ -12,7 +12,7 @@ import monotonic_align
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 
-from GST import VAE_GST, ReferenceEncoder
+from GST import  GST
 from commons import init_weights, get_padding
 
 
@@ -158,7 +158,6 @@ class TextEncoder(nn.Module):
         nn.init.normal_(self.emb.weight, 0.0, hidden_channels ** -0.5)
         self.emb_lang = nn.Embedding(5, hidden_channels)
         nn.init.normal_(self.emb_lang.weight, 0.0, hidden_channels ** -0.5)
-        self.gst_proj = nn.Linear(256, hidden_channels)
         self.encoder = attentions.Encoder(
             hidden_channels,
             filter_channels,
@@ -168,8 +167,8 @@ class TextEncoder(nn.Module):
             p_dropout)
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
-    def forward(self, x, x_lengths, lang, gst_emb):
-        x = (self.emb(x) + self.emb_lang(lang) + self.gst_proj(gst_emb.transpose(1,2))) * math.sqrt(self.hidden_channels)  # [b, t, h]
+    def forward(self, x, x_lengths, lang):
+        x = (self.emb(x) + self.emb_lang(lang)) * math.sqrt(self.hidden_channels)  # [b, t, h]
         x = torch.transpose(x, 1, -1)  # [b, h, t]
         x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
@@ -392,6 +391,17 @@ class MultiPeriodDiscriminator(torch.nn.Module):
 
         return y_d_rs, y_d_gs, fmap_rs, fmap_gs
 
+class StylePredictor(torch.nn.Module):
+    def __init__(self, hidden_c, gst_c,  n_speakers):
+        super(StylePredictor, self).__init__()
+        self.lstm = nn.LSTM(input_size=hidden_c, hidden_size=gst_c, num_layers=5,batch_first=True)
+        self.spk_emb = nn.Embedding(n_speakers, hidden_c)
+
+    def forward(self, x, sid):
+        x = x.detach()
+        x = x + self.spk_emb(sid)
+        _, x = self.lstm(x)
+        return x
 
 class SynthesizerTrn(nn.Module):
     """
@@ -418,7 +428,8 @@ class SynthesizerTrn(nn.Module):
                  n_speakers=0,
                  gin_channels=0,
                  use_sdp=True,
-                 token_num=10,
+                 token_num=None,
+                 gst_n_heads=None,
                  **kwargs):
 
         super().__init__()
@@ -464,12 +475,13 @@ class SynthesizerTrn(nn.Module):
 
         # if n_speakers > 1:
         #     self.emb_g = nn.Embedding(n_speakers, gin_channels)
-        self.ref_encoder = ReferenceEncoder(spec_channels, gin_channels)
+        self.gst = GST(token_num, gst_n_heads)
+        self.gst_prenet = nn.Conv1d(spec_channels, 80, 3, 1)
+        # self.style_predictor = StylePredictor(hidden_c=hidden_channels, gst_c=gin_channels, n_speakers=n_speakers)
 
     def forward(self, x, x_lengths, lang, y, y_lengths):
-        style_embed = self.ref_encoder(y)
-        g = style_embed.unsqueeze(-1)
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang, g)
+        g = self.gst(self.gst_prenet(y)).transpose(1,2)
+        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
 
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
         z_p = self.flow(z, y_mask, g=g)
@@ -505,10 +517,9 @@ class SynthesizerTrn(nn.Module):
         return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
 
     def infer(self, x, x_lengths, lang, y=None, noise_scale=0.6, length_scale=1.1, noise_scale_w=0.7, max_len=None):
-        style_embed = self.ref_encoder(y)
-        g = style_embed.unsqueeze(-1)
+        g = self.gst(self.gst_prenet(y)).transpose(1,2)
 
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang, g)
+        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
 
         if self.use_sdp:
             logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)

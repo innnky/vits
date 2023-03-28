@@ -1,5 +1,5 @@
 # source from https://github.com/KinglittleQ/GST-Tacotron/blob/master/GST.py
-import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -51,7 +51,6 @@ class Hyperparameters():
     # style token layer
     token_num = 10
     # token_emb_size = 256
-    num_heads = 1
     # multihead_attn_num_unit = 256
     # style_att_type = 'mlp_attention'
     # attn_normalize = True
@@ -90,8 +89,8 @@ class ReferenceEncoder(nn.Module):
     outputs --- [N, ref_enc_gru_size]
     '''
 
-    def __init__(self, spec_channels, ref_channel):
-        hp = Hyperparameters
+    def __init__(self, hp):
+
         super().__init__()
         K = len(hp.ref_enc_filters)
         filters = [1] + hp.ref_enc_filters
@@ -106,13 +105,11 @@ class ReferenceEncoder(nn.Module):
 
         out_channels = self.calculate_channels(hp.n_mels, 3, 2, 1, K)
         self.gru = nn.GRU(input_size=hp.ref_enc_filters[-1] * out_channels,
-                          hidden_size=ref_channel,
+                          hidden_size=hp.E // 2,
                           batch_first=True)
         self.n_mels = hp.n_mels
-        self.spec_prenet = nn.Conv1d(spec_channels, 80, 3, 1)
 
     def forward(self, inputs):
-        inputs = self.spec_prenet(inputs)
         N = inputs.size(0)
         out = inputs.view(N, 1, -1, self.n_mels)  # [N, 1, Ty, n_mels]
         for conv, bn in zip(self.convs, self.bns):
@@ -135,17 +132,16 @@ class ReferenceEncoder(nn.Module):
         return L
 
 
-
 class STL(nn.Module):
     '''
     inputs --- [N, E//2]
     '''
-    def __init__(self, hp,token_num):
+    def __init__(self, hp,token_num,n_heads):
         super().__init__()
-        self.embed = nn.Parameter(torch.FloatTensor(token_num, hp.E // hp.num_heads))
+        self.embed = nn.Parameter(torch.FloatTensor(token_num, hp.E // n_heads))
         d_q = hp.E // 2
-        d_k = hp.E // hp.num_heads
-        self.attention = MultiHeadAttention(query_dim=d_q, key_dim=d_k, num_units=hp.E, num_heads=hp.num_heads)
+        d_k = hp.E // n_heads
+        self.attention = MultiHeadAttention(query_dim=d_q, key_dim=d_k, num_units=hp.E, num_heads=n_heads)
 
         init.normal_(self.embed, mean=0, std=0.5)
 
@@ -198,56 +194,25 @@ class MultiHeadAttention(nn.Module):
         return out
 
 
-class VAE_GST(nn.Module):
-    def __init__(self, spec_c, style_emb_c):
+class GST(nn.Module):
+    def __init__(self, token_num, n_heads):
         super().__init__()
-        self.ref_encoder = ReferenceEncoder(spec_c, 256)
-        self.fc1 = nn.Linear(256, 32)
-        self.fc2 = nn.Linear(256, 32)
-        self.fc3 = nn.Linear(32, style_emb_c)
 
-    def reparameterize(self, mu, logvar):
-        if self.training:
-            std = torch.exp(0.5 * logvar)
-            eps = torch.randn_like(std)
-            return eps.mul(std).add_(mu)
-        else:
-            print(mu,logvar)
-            return mu
+        self.encoder = ReferenceEncoder(Hyperparameters)
+        self.stl = STL(Hyperparameters,token_num,n_heads)
 
     def forward(self, inputs):
-        enc_out = self.ref_encoder(inputs)
-        mu = self.fc1(enc_out)
-        logvar = self.fc2(enc_out)
-        z = self.reparameterize(mu, logvar)
-        style_embed = self.fc3(z)
+        enc_out = self.encoder(inputs)
+        style_embed = self.stl(enc_out)
 
-        return style_embed, mu, logvar, z
+        return style_embed
 
-    def kl_anneal_function(self, anneal_function, lag, step, k, x0, upper):
-        if anneal_function == 'logistic':
-            return float(upper/(upper+np.exp(-k*(step-x0))))
-        elif anneal_function == 'linear':
-            if step > lag:
-                return min(upper, step/x0)
-            else:
-                return 0
-        elif anneal_function == 'constant':
-            return 0.001
-
-    def anneal_weight(self, start_step, end_step, start_w, end_w, current_step):
-        if current_step < start_step:
-            return start_w
-        elif current_step < end_step:
-            return ((end_w - start_w) * (current_step - start_step) / (end_step - start_step)) + start_w
-        else:
-            return end_w
-
-    def kl_loss(self, logvar, mu, step):
-        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        # kl_weight = self.kl_anneal_function("logistic", lag=50000, step=step, k=0.0025, x0=10000, upper=0.2)
-        kl_weight = self.anneal_weight(50000, 55000, 0, 0.2, step)
-        return  kl_loss, kl_weight
+    def forward_token(self, token_id):
+        N = 1
+        keys = F.tanh(self.stl.embed).unsqueeze(0).expand(N, -1, -1)  # [N, token_num, E // num_heads]
+        values = self.stl.attention.W_value(keys)
+        out = values[:, token_id, :].unsqueeze(1)
+        return out
 
 if __name__ == '__main__':
     spec = torch.zeros([8, 1025, 454])

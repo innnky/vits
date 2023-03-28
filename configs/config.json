@@ -109,7 +109,8 @@
     "n_layers_q": 3,
     "use_spectral_norm": false,
     "gin_channels": 256,
-    "token_num": 4
+    "token_num": 4,
+    "gst_n_heads": 8
   },
   "model_dir": "./logdir/nen"
 }
