@@ -392,14 +392,14 @@ class MultiPeriodDiscriminator(torch.nn.Module):
         return y_d_rs, y_d_gs, fmap_rs, fmap_gs
 
 class GSTPredictor(torch.nn.Module):
-    def __init__(self, hidden_c, gst_c,  n_speakers):
+    def __init__(self, hidden_c, gst_c, spk_emb_channels):
         super(GSTPredictor, self).__init__()
         self.lstm = nn.LSTM(input_size=hidden_c, hidden_size=gst_c,batch_first=True)
-        self.spk_emb = nn.Embedding(n_speakers, hidden_c)
-    def forward(self, x, sid):
+        self.cond = nn.Conv1d(spk_emb_channels, hidden_c, 1)
+
+    def forward(self, x, spk_emb):
         x = x.detach()
-        emb = self.spk_emb(sid).unsqueeze(-1)
-        x = x + emb
+        x = x + self.cond(spk_emb)
         _, (x, _) = self.lstm(x.transpose(1,2))
         return x.squeeze(0).unsqueeze(-1)
 
@@ -473,18 +473,22 @@ class SynthesizerTrn(nn.Module):
         else:
             self.dp = DurationPredictor(hidden_channels, 256, 3, 0.5, gin_channels=gin_channels)
 
-        # if n_speakers > 1:
-        #     self.emb_g = nn.Embedding(n_speakers, gin_channels)
+        self.spk_emb = nn.Embedding(n_speakers, 256)
         self.gst = GST(token_num, gst_n_heads)
         self.gst_prenet = nn.Conv1d(spec_channels, 80, 3, 1)
-        self.gst_predictor = GSTPredictor(hidden_c=hidden_channels, gst_c=gin_channels, n_speakers=n_speakers)
+        self.gst_predictor = GSTPredictor(hidden_c=hidden_channels, gst_c=256, spk_emb_channels=256)
 
     def forward(self, x, x_lengths, lang, y, y_lengths, sid):
-        g = self.gst(self.gst_prenet(y)).transpose(1,2)
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
-        pred_g = self.gst_predictor(x, sid)
-        gst_predict_loss = F.mse_loss(pred_g, g.detach())
 
+        spk_emb = self.spk_emb(sid).unsqueeze(-1)
+        gst_emb = self.gst(self.gst_prenet(y)).transpose(1,2)
+
+
+        pred_gst = self.gst_predictor(x.detach(), spk_emb.detach())
+        gst_predict_loss = F.mse_loss(pred_gst, gst_emb.detach())
+
+        g = torch.cat([gst_emb, spk_emb], dim=1)
 
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
         z_p = self.flow(z, y_mask, g=g)
@@ -521,12 +525,15 @@ class SynthesizerTrn(nn.Module):
 
     def infer(self, x, x_lengths, lang, y=None, noise_scale=0.6, length_scale=1.1, noise_scale_w=0.7, max_len=None,
               predict_gst=False, sid=None):
-        if predict_gst:
-            g = self.gst_predictor(x, sid)
-        else:
-            g = self.gst(self.gst_prenet(y)).transpose(1,2)
 
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
+
+        spk_emb = self.spk_emb(sid).unsqueeze(-1)
+        if predict_gst:
+            gst_emb = self.gst_predictor(x, spk_emb.detach())
+        else:
+            gst_emb = self.gst(self.gst_prenet(y)).transpose(1, 2)
+        g = torch.cat([gst_emb, spk_emb], dim=1)
 
         if self.use_sdp:
             logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)
