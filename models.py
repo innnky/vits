@@ -156,8 +156,7 @@ class TextEncoder(nn.Module):
 
         self.emb = nn.Embedding(n_vocab, hidden_channels)
         nn.init.normal_(self.emb.weight, 0.0, hidden_channels ** -0.5)
-        self.emb_lang = nn.Embedding(5, hidden_channels)
-        nn.init.normal_(self.emb_lang.weight, 0.0, hidden_channels ** -0.5)
+
         self.encoder = attentions.Encoder(
             hidden_channels,
             filter_channels,
@@ -165,19 +164,64 @@ class TextEncoder(nn.Module):
             n_layers,
             kernel_size,
             p_dropout)
-        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
-    def forward(self, x, x_lengths, lang):
-        x = (self.emb(x) + self.emb_lang(lang)) * math.sqrt(self.hidden_channels)  # [b, t, h]
+    def forward(self, x, x_lengths):
+        x = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
         x = torch.transpose(x, 1, -1)  # [b, h, t]
         x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
         x = self.encoder(x * x_mask, x_mask)
+        return x, x_mask
+
+class StyleEncoder(nn.Module):
+    def __init__(self,
+                 out_channels,
+                 hidden_channels,
+                 filter_channels,
+                 n_heads,
+                 n_layers,
+                 kernel_size,
+                 p_dropout,
+                 gst_c):
+        super().__init__()
+        self.out_channels = out_channels
+        self.hidden_channels = hidden_channels
+        self.filter_channels = filter_channels
+        self.n_heads = n_heads
+        self.n_layers = n_layers
+        self.kernel_size = kernel_size
+        self.p_dropout = p_dropout
+
+        self.encoder = attentions.Encoder(
+            hidden_channels,
+            filter_channels,
+            n_heads,
+            n_layers-4,
+            kernel_size,
+            p_dropout)
+        self.cond_gst = nn.Conv1d(gst_c, hidden_channels, 1)
+        self.emb_lang = nn.Embedding(5, hidden_channels)
+        nn.init.normal_(self.emb_lang.weight, 0.0, hidden_channels ** -0.5)
+
+    def forward(self, x,x_mask, gst_emb, lang):
+        x += self.cond_gst(gst_emb)
+        x += self.emb_lang(lang).transpose(1,-1)
+        x = self.encoder(x * x_mask, x_mask)
+        return x
+
+
+class Proj(nn.Module):
+    def __init__(self,
+                 out_channels,
+                 hidden_channels):
+        super().__init__()
+        self.out_channels = out_channels
+        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
+
+    def forward(self, x, x_mask):
         stats = self.proj(x) * x_mask
-
         m, logs = torch.split(stats, self.out_channels, dim=1)
-        return x, m, logs, x_mask
-
+        return m, logs
 
 class ResidualCouplingBlock(nn.Module):
     def __init__(self,
@@ -462,6 +506,8 @@ class SynthesizerTrn(nn.Module):
                                  n_layers,
                                  kernel_size,
                                  p_dropout)
+
+        self.enc_p_proj = Proj(inter_channels, hidden_channels)
         self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates,
                              upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
         self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16,
@@ -473,13 +519,22 @@ class SynthesizerTrn(nn.Module):
         else:
             self.dp = DurationPredictor(hidden_channels, 256, 3, 0.5, gin_channels=gin_channels)
 
-        self.spk_emb = nn.Embedding(n_speakers, 256)
+        gst_channel= 256
+        self.spk_emb = nn.Embedding(n_speakers, gst_channel)
         self.gst = GST(token_num, gst_n_heads)
         self.gst_prenet = nn.Conv1d(spec_channels, 80, 3, 1)
-        self.gst_predictor = GSTPredictor(hidden_c=hidden_channels, gst_c=256, spk_emb_channels=256)
+        self.gst_predictor = GSTPredictor(hidden_c=hidden_channels, gst_c=gst_channel, spk_emb_channels=gin_channels-gst_channel)
+        self.style_encoder = StyleEncoder(inter_channels,
+                                 hidden_channels,
+                                 filter_channels,
+                                 n_heads,
+                                 n_layers,
+                                 kernel_size,
+                                 p_dropout,
+                                 gst_c=gst_channel)
 
     def forward(self, x, x_lengths, lang, y, y_lengths, sid):
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
+        x,  x_mask = self.enc_p(x, x_lengths)
 
         spk_emb = self.spk_emb(sid).unsqueeze(-1)
         gst_emb = self.gst(self.gst_prenet(y)).transpose(1,2)
@@ -487,6 +542,10 @@ class SynthesizerTrn(nn.Module):
 
         pred_gst = self.gst_predictor(x.detach(), spk_emb.detach())
         gst_predict_loss = F.mse_loss(pred_gst, gst_emb.detach())
+
+        x = self.style_encoder(x * x_mask, x_mask, gst_emb, lang)
+        m_p, logs_p = self.enc_p_proj(x, x_mask)
+
 
         g = torch.cat([gst_emb, spk_emb], dim=1)
 
@@ -526,13 +585,16 @@ class SynthesizerTrn(nn.Module):
     def infer(self, x, x_lengths, lang, y=None, noise_scale=0.6, length_scale=1.1, noise_scale_w=0.7, max_len=None,
               predict_gst=False, sid=None):
 
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, lang)
+        x,  x_mask = self.enc_p(x, x_lengths)
 
         spk_emb = self.spk_emb(sid).unsqueeze(-1)
         if predict_gst:
             gst_emb = self.gst_predictor(x, spk_emb.detach())
         else:
             gst_emb = self.gst(self.gst_prenet(y)).transpose(1, 2)
+        x = self.style_encoder(x * x_mask, x_mask, gst_emb, lang)
+        m_p, logs_p = self.enc_p_proj(x, x_mask)
+
         g = torch.cat([gst_emb, spk_emb], dim=1)
 
         if self.use_sdp:
