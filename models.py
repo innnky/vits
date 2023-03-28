@@ -583,13 +583,15 @@ class SynthesizerTrn(nn.Module):
         return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q), gst_predict_loss
 
     def infer(self, x, x_lengths, lang, y=None, noise_scale=0.6, length_scale=1.1, noise_scale_w=0.7, max_len=None,
-              predict_gst=False, sid=None):
+              predict_gst=False, sid=None, token_id=None):
 
         x,  x_mask = self.enc_p(x, x_lengths)
 
         spk_emb = self.spk_emb(sid).unsqueeze(-1)
         if predict_gst:
             gst_emb = self.gst_predictor(x, spk_emb.detach())
+        elif token_id is not None:
+            gst_emb = self.gst.forward_token(token_id).transpose(1, 2)
         else:
             gst_emb = self.gst(self.gst_prenet(y)).transpose(1, 2)
         x = self.style_encoder(x * x_mask, x_mask, gst_emb, lang)

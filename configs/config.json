@@ -110,7 +110,7 @@
     "use_spectral_norm": false,
     "gin_channels": 512,
     "token_num": 10,
-    "gst_n_heads": 8
+    "gst_n_heads": 1
   },
   "model_dir": "./logdir/nen"
 }
