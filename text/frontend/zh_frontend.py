@@ -39,7 +39,7 @@ class Frontend():
         self.punc = ['!', '?', '…', ",", ".", "#", '-', "%", "$"]
         # g2p_model can be pypinyin and g2pM
         self.g2p_model = g2p_model
-        self.add_word_sep = True
+        self.add_word_sep = False
         if self.g2p_model == "g2pM":
             self.g2pM_model = G2pM()
             self.pinyin2phone = generate_lexicon(
@@ -158,6 +158,9 @@ class Frontend():
             for c, v in zip(initials, finals):
                 # NOTE: post process for pypinyin outputs
                 # we discriminate i, ii and iii
+                if c =="r5":
+                    phones.append("er5")
+                    continue
                 if c:
                     phones.append(c)
                 if v and v not in self.punc:
