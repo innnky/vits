@@ -200,10 +200,11 @@ class GST(nn.Module):
 
         self.encoder = ReferenceEncoder(Hyperparameters)
         self.stl = STL(Hyperparameters,token_num,n_heads)
+        self.cond = nn.Conv1d(256, 128, 1)
 
-    def forward(self, inputs):
+    def forward(self, inputs, spk_emb):
         enc_out = self.encoder(inputs)
-        style_embed = self.stl(enc_out)
+        style_embed = self.stl(self.cond(spk_emb).squeeze(-1)+enc_out)
 
         return style_embed
 

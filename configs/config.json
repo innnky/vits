@@ -59,7 +59,10 @@
       "SSB0407": 21,
       "SSB0632": 22,
       "SSB0668": 23,
-      "SSB0415": 24
+      "SSB0415": 24,
+      "nyaru": 25,
+      "tang": 26,
+      "rong": 27
     }
   },
   "model": {
@@ -109,8 +112,8 @@
     "n_layers_q": 3,
     "use_spectral_norm": false,
     "gin_channels": 512,
-    "token_num": 10,
+    "token_num": 50,
     "gst_n_heads": 1
   },
-  "model_dir": "./logdir/nen"
+  "model_dir": "./logdir/cjke"
 }

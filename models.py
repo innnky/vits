@@ -537,7 +537,7 @@ class SynthesizerTrn(nn.Module):
         x,  x_mask = self.enc_p(x, x_lengths)
 
         spk_emb = self.spk_emb(sid).unsqueeze(-1)
-        gst_emb = self.gst(self.gst_prenet(y)).transpose(1,2)
+        gst_emb = self.gst(self.gst_prenet(y), spk_emb).transpose(1,2)
 
 
         pred_gst = self.gst_predictor(x.detach(), spk_emb.detach())
@@ -593,7 +593,7 @@ class SynthesizerTrn(nn.Module):
         elif token_id is not None:
             gst_emb = self.gst.forward_token(token_id).transpose(1, 2)
         else:
-            gst_emb = self.gst(self.gst_prenet(y)).transpose(1, 2)
+            gst_emb = self.gst(self.gst_prenet(y), spk_emb).transpose(1, 2)
         x = self.style_encoder(x * x_mask, x_mask, gst_emb, lang)
         m_p, logs_p = self.enc_p_proj(x, x_mask)
 
